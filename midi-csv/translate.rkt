@@ -36,37 +36,32 @@
        (strip-leading-whitespace?  . #t)
        (strip-trailing-whitespace? . #t))))
   (let ((next-row (reader (open-input-file filename))))
-    (csv-map (λ (x) x) next-row)))
+    (csv-map (λ (x) (cons (string->number (car x)) (cdr x))) next-row)))
 
+(define (state? s) (member s '("on" "off")))
 
 (define (fix-state s)
   (match s
     ["on" "Note_on_c"]
     ["off" "Note_off_c"]))
 
-(define DEFAULT-TRASH 0)
-(define DEFAULT-CHANNEL 1)
+(define DEFAULT-TRASH 1)
+(define DEFAULT-CHANNEL 0)
 (define DEFAULT-VELOCITY 60)
 
-(define (write-MIDI csv)
+(define (format-MIDI csv)
   (map
    (λ (x)
      (match x
-       [`(,time ,state ,pitch)
+       [`(,time ,(? state? s) ,pitch)
         (list DEFAULT-TRASH
               (number->string time)
-              (fix-state state)
+              (fix-state s)
               DEFAULT-CHANNEL
               (number->string pitch)
-              DEFAULT-VELOCITY)]))
+              DEFAULT-VELOCITY)]
+       [else x]))
    csv))
-
-(define ((write-MIDI-file e) fname)
-  (let ((t (write-MIDI e))
-        (p (open-output-file fname #:exists 'replace)))
-    (display-table t p)
-    (close-output-port p)))
-
 
 (define EXAMPLE "very_complex/very_complex.csv")
 
@@ -94,6 +89,20 @@
          x))
    counts))
 
+(define ((make-note-on time) n) `(,time "on" ,n))
+(define ((make-note-off time) n) `(,time "off" ,n))
+
+(define (make-header max)
+  '(("0" "0" "Header" "0" "1" "96")
+    ("1" "0" "Start_track")
+    ("1" "0" "Title_t" "1-MIDI 1\\000")
+    ("1" "0" "Time_signature" "4" "2" "36" "8")
+    ("1" "0" "Time_signature" "4" "2" "36" "8")))
+
+(define (make-footer max)
+  `((1 ,max "End_track")
+    (1 0 "End_of_file")))
+
 ;; translates Racket-data CSV into text version
 (define (csv->words csv)
   (let ((MAX (foldr max 0 (map first csv))))
@@ -111,17 +120,17 @@
        (if (<= i time)
            (loop track on (add1 i) (add-to-count on i counts))
            (match state
-             ["on" (let ((on (cons pitch on)))
-                     (loop d on time (add-to-count on time counts)))]
+             ["on"
+              (let ((on (cons pitch on)))
+                (loop d on time (add-to-count on time counts)))]
              ["off"
               (let ((on (remove pitch on)))
                 (loop d on time (remove-from-count pitch time counts)))]))]
       [else (error 'parse-csv (format "unknown instr ~s" track))]))))
 
-(define ((make-note-on time) n) `(,time "on" ,n))
-(define ((make-note-off time) n) `(,time "off" ,n))
+;; translates translated MIDI back into CSV format
 
-(define (words->csv words)
+(define (words->csv-loop words)
   (let loop ((track words)
              (on '()))
     (match track
@@ -137,14 +146,18 @@
                   (λ (x y) (< (caddr x) (caddr y))))
             (loop d (to-set (append word (set-difference on turned-off)))))))])))
 
+(define (words->csv words)
+  (let* ((track (words->csv-loop words))
+         (max (foldr max 0 (map car track))))
+    (append (make-header max)
+            track
+            (make-footer max))))
+
 (define ((write-file e) fname)
   (let ((p (open-output-file fname #:exists 'replace)))
     (display-table e p)
     (close-output-port p)))
 
-
-
-
 (define (encode-csv in out) ((write-file (csv->words (read-MIDI in))) out))
 
-(define (decode-csv in out) ((write-file (words->csv (read-encoding in))) out))
+(define (decode-csv in out) ((write-file (format-MIDI (words->csv (read-encoding in)))) out))
