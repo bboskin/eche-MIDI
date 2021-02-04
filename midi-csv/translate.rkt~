@@ -1,0 +1,14 @@
+#lang racket
+
+(require csv-reading csv-writing)
+
+
+(define reader
+  (make-csv-reader-maker
+   '((separator-chars            #\,)
+     (strip-leading-whitespace?  . #t)
+     (strip-trailing-whitespace? . #t))))
+
+(define (read-MIDI filename)
+  (let ((next-row (reader (open-input-file filename))))
+    (csv-map (λ (x) x) next-row)))
