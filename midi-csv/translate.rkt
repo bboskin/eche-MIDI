@@ -52,7 +52,7 @@
    csv))
 
 
-(define EXAMPLE "unquantized/unquantized.csv")
+(define EXAMPLE "very_complex/very_complex.csv")
 
 (define (set-cons x ls) (if (member x ls) ls (cons x ls)))
 (define (to-set ls) (foldr set-cons '() ls))
@@ -110,11 +110,13 @@
              (on '()))
     (match track
       ['() '()]
-      [`((,k ,word) . ,d)
+      [`((,t ,word) . ,d)
        (let ((word (string->list word)))
          (let ((turned-on (set-difference word on))
                (turned-off (set-difference on word)))
            (append
-            (map (make-note-on k) (map char->integer turned-on))
-            (map (make-note-off k) (map char->integer turned-off))
+            (sort (append
+                   (map (make-note-off t) (map char->integer turned-off))
+                   (map (make-note-on t) (map char->integer turned-on)))
+                  (λ (x y) (< (caddr x) (caddr y))))
             (loop d (to-set (append word (set-difference on turned-off)))))))])))
