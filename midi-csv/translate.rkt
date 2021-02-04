@@ -1,96 +1,31 @@
 #lang racket
 
 (require csv-reading csv-writing)
+(provide encode-csv decode-csv)
 
-
-;; reads CSV file into Racket data
-(define (read-MIDI filename)
-  (define reader
-    (make-csv-reader-maker
-     '((separator-chars            #\,)
-       (strip-leading-whitespace?  . #t)
-       (strip-trailing-whitespace? . #t))))
-  (let ((next-row (reader (open-input-file filename))))
-    (filter
-     (λ (x) x)
-     (csv-map
-      (λ (x)
-        (match x
-          [`(,_ ,time "Header" . ,c) #f]
-          [`(,_ ,time "Start_track" . ,c) #f]
-          [`(,_ ,time "Title_t" . ,c) #f]
-          [`(,_ ,time "Time_signature" . ,c) #f]
-          [`(,_ ,time "End_track" . ,c) #f]
-          [`(,_ ,time "End_of_file" . ,c) #f]
-          ;;;;;;;
-          [`(,_ ,time "Note_on_c" ,chan ,pitch ,vel)
-           (list (string->number time) "on" (string->number pitch))]
-          [`(,_ ,time "Note_off_c" ,chan ,pitch ,vel)
-           (list (string->number time) "off" (string->number pitch))]))
-      next-row))))
-
-(define (read-encoding filename)
-  (define reader
-    (make-csv-reader-maker
-     '((separator-chars            #\,)
-       (strip-leading-whitespace?  . #t)
-       (strip-trailing-whitespace? . #t))))
-  (let ((next-row (reader (open-input-file filename))))
-    (csv-map (λ (x) (cons (string->number (car x)) (cdr x))) next-row)))
-
-(define (state? s) (member s '("on" "off")))
-
-(define (fix-state s)
-  (match s
-    ["on" "Note_on_c"]
-    ["off" "Note_off_c"]))
-
-(define DEFAULT-TRASH 1)
-(define DEFAULT-CHANNEL 0)
-(define DEFAULT-VELOCITY 60)
-
-(define (format-MIDI csv)
-  (map
-   (λ (x)
-     (match x
-       [`(,time ,(? state? s) ,pitch)
-        (list DEFAULT-TRASH
-              (number->string time)
-              (fix-state s)
-              DEFAULT-CHANNEL
-              (number->string pitch)
-              DEFAULT-VELOCITY)]
-       [else x]))
-   csv))
 
 (define EXAMPLE "very_complex/very_complex.csv")
 
+;;;;;;;;;;;;;;;;;;;;;;;
+;; Helper functions and constants
+
+;; number stuff
+(define ((gteq? i) x) (<= i x))
+(define DEF-TRASH 1)
+(define DEF-CHAN 0)
+(define DEF-VEL 60)
+
+;; set stuff
 (define (set-cons x ls) (if (member x ls) ls (cons x ls)))
 (define (to-set ls) (foldr set-cons '() ls))
-(define (set-difference s1 s2)
-  (foldr
-   (λ (x a) (if (member x s2) a (cons x a)))
-   '()
-   s1))
+(define (set-difference s1 s2) (foldr (λ (x a) (if (member x s2) a (cons x a))) '() s1))
+(define (set-union s1 s2) (foldr set-cons s1 s2))
 
-(define (add-to-count pitches time counts)
-  (map
-   (λ (x)
-     (if (= (car x) time)
-         (cons (car x) (sort (to-set (append (cdr x) pitches)) <))
-         x))
-   counts))
 
-(define (remove-from-count pitch time counts)
-  (map
-   (λ (x)
-     (if (= (car x) time)
-         (cons (car x) (remove pitch (cdr x)))
-         x))
-   counts))
+;;;;;;;;;;;;;;;;;;;;;;
+;; formatting
 
-(define ((make-note-on time) n) `(,time "on" ,n))
-(define ((make-note-off time) n) `(,time "off" ,n))
+(define (on/off-instr? x) (member x '("Note_on_c" "Note_off_c")))
 
 (define (make-header max)
   '(("0" "0" "Header" "0" "1" "96")
@@ -103,6 +38,59 @@
   `((1 ,max "End_track")
     (1 0 "End_of_file")))
 
+(define (format-instruction i)
+  (match i
+    [`(,_ ,time ,(? on/off-instr? s) ,chan ,pitch ,vel)
+     (list (string->number time) s (string->number pitch))]
+    [else #f]))
+
+(define (format-MIDI i)
+  (match i
+    [`(,time ,(? on/off-instr? s) ,pitch)
+     (list DEF-TRASH (number->string time) s DEF-CHAN (number->string pitch) DEF-VEL)]
+    [else i]))
+
+(define ((make-note-on time) n) `(,time "Note_on_c" ,n))
+(define ((make-note-off time) n) `(,time "Note_off_c" ,n))
+
+;;;;;;;;;;;;;;;;;;;;;;;
+;; template reading/writing functions
+(define reader
+    (make-csv-reader-maker
+     '((separator-chars            #\,)
+       (strip-leading-whitespace?  . #t)
+       (strip-trailing-whitespace? . #t))))
+
+(define (read-encoding filename)
+  (let ((next-row (reader (open-input-file filename))))
+    (csv-map (λ (x) (cons (string->number (car x)) (cdr x))) next-row)))
+
+(define (read-MIDI filename)
+  (let ((next-row (reader (open-input-file filename))))
+    (filter (λ (x) x) (csv-map format-instruction next-row))))
+
+(define ((write-file e) fname)
+  (let ((p (open-output-file fname #:exists 'replace)))
+    (display-table e p)
+    (close-output-port p)))
+
+;;;;;;;;;;;;;;;;;;;;;;;
+;; Translators
+
+(define (notes-are-on letters pitches) (sort (to-set (append letters pitches)) <))
+(define (notes-are-off letters pitch) (remove pitch letters))
+
+(define ((csv->words-go f) p time counts)
+  (map
+   (λ (x) (if (= (car x) time) (cons (car x) (f (cdr x) p)) x))
+   counts))
+
+(define add-to-count (csv->words-go notes-are-on))
+(define remove-from-count (csv->words-go notes-are-off))
+
+(define (concatenate-words ln)
+  (list (car ln) (list->string (map integer->char (cdr ln)))))
+
 ;; translates Racket-data CSV into text version
 (define (csv->words csv)
   (let ((MAX (foldr max 0 (map first csv))))
@@ -111,53 +99,39 @@
                (i 0)
                (counts (build-list (add1 MAX) (λ (x) `(,x)))))
     (match track
-      ['() (map
-            (λ (x)
-              (let ((word (list->string (map integer->char (cdr x)))))
-                (list (car x) word)))
-            counts)]
-      [`((,time ,state ,pitch) . ,d)
-       (if (<= i time)
-           (loop track on (add1 i) (add-to-count on i counts))
-           (match state
-             ["on"
-              (let ((on (cons pitch on)))
-                (loop d on time (add-to-count on time counts)))]
-             ["off"
-              (let ((on (remove pitch on)))
-                (loop d on time (remove-from-count pitch time counts)))]))]
+      ['() (map concatenate-words counts)]
+      [`((,(? (gteq? i) t) ,s ,p) . ,d)
+       (loop track on (add1 i) (add-to-count on i counts))]
+      [`((,time "Note_on_c" ,pitch) . ,d)
+       (let ((on (cons pitch on)))
+         (loop d on time (add-to-count on time counts)))]
+      [`((,time "Note_off_c" ,pitch) . ,d)
+       (let ((on (remove pitch on)))
+         (loop d on time (remove-from-count pitch time counts)))]
       [else (error 'parse-csv (format "unknown instr ~s" track))]))))
 
 ;; translates translated MIDI back into CSV format
 
-(define (words->csv-loop words)
-  (let loop ((track words)
-             (on '()))
-    (match track
-      ['() '()]
-      [`((,t ,word) . ,d)
-       (let ((word (string->list word)))
-         (let ((turned-on (set-difference word on))
-               (turned-off (set-difference on word)))
-           (append
-            (sort (append
-                   (map (make-note-off t) (map char->integer turned-off))
-                   (map (make-note-on t) (map char->integer turned-on)))
-                  (λ (x y) (< (caddr x) (caddr y))))
-            (loop d (to-set (append word (set-difference on turned-off)))))))])))
+(define (words->csv-loop track on)
+  (match track
+    ['() '()]
+    [`((,t ,word) . ,d)
+     (let* ((word (string->list word))
+            (turned-on (set-difference word on))
+            (turned-off (set-difference on word)))
+       (append
+        (map (make-note-off t) (map char->integer turned-off))
+        (map (make-note-on t) (map char->integer turned-on))
+        (words->csv-loop d (set-union word (set-difference on turned-off)))))]))
 
 (define (words->csv words)
-  (let* ((track (words->csv-loop words))
-         (max (foldr max 0 (map car track))))
-    (append (make-header max)
-            track
-            (make-footer max))))
+  (let ((max (foldr max 0 (map car words))))
+    (append (make-header max) (words->csv-loop words '()) (make-footer max))))
 
-(define ((write-file e) fname)
-  (let ((p (open-output-file fname #:exists 'replace)))
-    (display-table e p)
-    (close-output-port p)))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Interface functions to be used by y'all!!
 
-(define (encode-csv in out) ((write-file (csv->words (read-MIDI in))) out))
-
-(define (decode-csv in out) ((write-file (format-MIDI (words->csv (read-encoding in)))) out))
+(define (encode-csv in out)
+  ((write-file (csv->words (read-MIDI in))) out))
+(define (decode-csv in out)
+  ((write-file (map format-MIDI (words->csv (read-encoding in)))) out))
