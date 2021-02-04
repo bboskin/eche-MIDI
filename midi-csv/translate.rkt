@@ -29,6 +29,16 @@
            (list (string->number time) "off" (string->number pitch))]))
       next-row))))
 
+(define (read-encoding filename)
+  (define reader
+    (make-csv-reader-maker
+     '((separator-chars            #\,)
+       (strip-leading-whitespace?  . #t)
+       (strip-trailing-whitespace? . #t))))
+  (let ((next-row (reader (open-input-file filename))))
+    (csv-map (λ (x) x) next-row)))
+
+
 (define (fix-state s)
   (match s
     ["on" "Note_on_c"]
@@ -50,6 +60,12 @@
               (number->string pitch)
               DEFAULT-VELOCITY)]))
    csv))
+
+(define ((write-MIDI-file e) fname)
+  (let ((t (write-MIDI e))
+        (p (open-output-file fname #:exists 'replace)))
+    (display-table t p)
+    (close-output-port p)))
 
 
 (define EXAMPLE "very_complex/very_complex.csv")
@@ -120,3 +136,15 @@
                    (map (make-note-on t) (map char->integer turned-on)))
                   (λ (x y) (< (caddr x) (caddr y))))
             (loop d (to-set (append word (set-difference on turned-off)))))))])))
+
+(define ((write-file e) fname)
+  (let ((p (open-output-file fname #:exists 'replace)))
+    (display-table e p)
+    (close-output-port p)))
+
+
+
+
+(define (encode-csv in out) ((write-file (csv->words (read-MIDI in))) out))
+
+(define (decode-csv in out) ((write-file (words->csv (read-encoding in))) out))
