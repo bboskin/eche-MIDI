@@ -133,5 +133,54 @@
 
 (define (encode-csv in out)
   ((write-file (csv->words (read-MIDI in))) out))
+
 (define (decode-csv in out)
   ((write-file (map format-MIDI (words->csv (read-encoding in)))) out))
+
+
+
+;;; running from the command-line
+(define args (current-command-line-arguments))
+(if (= (vector-length args) 3)
+    (let ((mode (vector-ref args 0))
+          (input-file (vector-ref args 1))
+          (output-file (vector-ref args 2)))
+      (match mode
+        ["encode" (begin
+                  (encode-csv input-file output-file)
+                  (displayln
+                   (format
+                    "successfully encoded the contents of ~s as text and saved in ~s"
+                    input-file
+                    output-file)))]
+        ["decode" (begin
+                  (decode-csv input-file output-file)
+                  (displayln
+                   (format
+                    "successfully decoded the contents of ~s to midi and saved in ~s"
+                    input-file
+                    output-file)))]
+        
+        [else (displayln "expected either 'text' or 'midi' as first argument")]))
+    (begin
+      (displayln "3 arguments expected:")
+      (displayln "1. program mode (encode / decode) which tells the type of the input")
+      (displayln "2. source file")
+      (displayln "3. destination file")))
+
+
+
+#|
+
+here are examples of how to run the file (from the directoy midi-csv).
+
+racket translate.rkt tells the computer which file to run (obv)
+
+and then the first argument must be either midi or text, and tells
+the program to run either encode or decode
+
+
+racket translate.rkt encode complex/complex.csv complex/complex.txt
+
+racket translate.rkt decode complex/complex.txt complex/complex2.csv
+|#
